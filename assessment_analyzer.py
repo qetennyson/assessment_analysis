@@ -8,12 +8,38 @@ This script creates a simple web page with:
 When a file is uploaded, it will display a success message.
 """
 
-# --- IMPORTS ---
-# We import our libraries and give them common "nicknames"
-# 'st' is the standard nickname for streamlit
-# 'pd' is the standard nickname for pandas
 import streamlit as st
 import pandas as pd
+
+
+def find_question_columns(df):
+    """
+    Scans a Pandas DataFrame for columns that end with "[Score]".
+    It then returns a list of the *base* question names.
+
+    For example:
+    If it finds "Question 1 [Score]", it will return "Question 1".
+
+    Args:
+        df (pd.DataFrame): The DataFrame loaded from the user's CSV.
+
+    Returns:
+        list: A list of strings, where each string is a base
+              question name that has a corresponding score column.
+    """
+    all_columns = df.columns
+    
+    question_names = []
+
+    for col in all_columns:
+
+        if col.endswith(" [Score]"):
+            
+            base_name = col[:-8]
+
+            question_names.append(base_name)
+            
+    return question_names
 
 # --- APP LAYOUT ---
 # These commands build the visual parts of your web app.
@@ -32,6 +58,7 @@ st.write("Upload your CSV export to get started.")
 # We tell Streamlit to create a file uploader with a label.
 # When a user uploads a file, Streamlit stores it in the
 # 'uploaded_file' variable.
+
 uploaded_file = st.file_uploader(
     label="Choose a CSV file from your computer",
     type="csv"  # We can restrict the file type to only allow CSVs
@@ -59,7 +86,16 @@ if uploaded_file is not None:
     # For now, let's just show a success message and the filename
     # st.success() displays a green "success" box.
     st.success(f"Successfully uploaded: {uploaded_file.name}!")
+    try:
+        df = pd.read_csv(uploaded_file)
 
-    # In our next step, we will put the code to *read*
-    # and *process* the file here.
-    st.info("Next step: We'll read this file with Pandas.")
+        st.success(f"Successfully read CSV file: {uploaded_file.name[:35]}")
+
+        question_list = find_question_columns(df)
+
+    except Exception as e:
+        # If anything in our 'try' block fails, this code
+        # will run. 'e' is the error message.
+        # st.error() displays a red error box.
+        st.error(f"An error occurred while processing the file: {e}")
+        st.write("Please ensure this is a valid CSV file and try again.")
