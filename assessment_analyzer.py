@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-
 def find_question_columns(df):
     """
     Scans a Pandas DataFrame for columns that end with "[Score]".
@@ -30,11 +29,11 @@ def pre_process_scores(raw_df, question_list):
     processed_df = raw_df.copy()
 
     for question in question_list:
-        score_col_name = f'{question} Score'
+        score_col_name = f'{question} [Score]'
 
         # this applies a lambda operation to each cell in the target column.
         processed_df[score_col_name] = processed_df[score_col_name].apply(
-            lambda x: 1 if str(x.startswith('1.00')) else 0
+            lambda x: 1 if str(x).startswith('1.00') else 0
         )
 
     return processed_df 
@@ -135,65 +134,77 @@ if 'target_groups' not in st.session_state:
 # MAIN
 if uploaded_file is not None:
 
-    # For now, let's just show a success message and the filename
-    # st.success() displays a green "success" box.
-    st.success(f"Successfully uploaded: {uploaded_file.name}!")
     try:
         df = pd.read_csv(uploaded_file)
 
-        st.session_state.df = df
-        st.session_state.question_list = find_question_columns(df)
-        
-        st.success(f"Successfully read CSV file: {uploaded_file.name[:35]}")
+        # 1. Find the questions
+        question_list = find_question_columns(df)
 
-        if not st.session_state.question_list:
+        if not question_list:
             st.warning("File read, however, there were no columns clearly labeled: ' [Score]'.")
+            st.session_state.clear()
         else:
             # --- INTERACTIVE UI FOR CREATING GROUPS ---
-            st.subheader("Create a Learning Target Group")
             
-            # st.text_input creates a text box.
-            # The "key" is a unique ID we can use to
-            # access its value.
-            target_name = st.text_input(
-                label="Learning Target:",
-                key="new_target_name"
-            )
+            # 2. convert '1.00' column to 1s and 0s
+            processed_df = pre_process_scores(df, question_list)
             
-            # st.multiselect is the perfect widget for this.
-            # It takes our 'question_list' as the options
-            # and lets the user pick as many as they want.
-            selected_questions = st.multiselect(
-                label="Select questions for this learning target:",
-                options=st.session_state.question_list,
-                key="new_target_questions"
-            )
+            st.session_state.processed_df = processed_df
+            st.session_state.question_list = question_list
 
-            # An 'Add' button.
-            if st.button("Add Learning Target"):
+            st.success(f"Successfully read and processed CSV file: {uploaded_file.name[:35]}")
+
+            st.subheader("Create a Learning Target Group")
+
+            with st.form(key='target_form'):
+                # st.text_input creates a text box.
+                # The "key" is a unique ID we can use to
+                # access its value.
+                target_name = st.text_input(
+                    label="Learning Target:",
+                    key="new_target_name"
+                )
+                
+                # st.multiselect is the perfect widget for this.
+                # It takes our 'question_list' as the options
+                # and lets the user pick as many as they want.
+                selected_questions = st.multiselect(
+                    label="Select questions for this learning target:",
+                    options=st.session_state.question_list,
+                    key="new_target_questions"
+                )
+                
+                threshold_n = st.number_input(
+                    label="Num. Questions Correct Threshold",
+                    min_value=1,
+                    value=1,
+                    step=1,
+                    key='new_target_threshold',
+
+                )
+
+                # An 'Add' button.
+                submit_button = st.form_submit_button("Add Learning Target")
+
+                            # --- This logic now runs *only* if the submit_button was clicked ---
+            if submit_button:
                 # --- COMMON PATTERN: "FORM VALIDATION" ---
-                # We check for input before processing.
                 if not target_name:
                     st.warning("Please enter a name for the target.")
                 elif not selected_questions:
                     st.warning("Please select at least one question.")
+                # We add this validation back in!
+                elif threshold_n > len(selected_questions):
+                    st.error(f"Threshold ({threshold_n}) cannot be larger than the number of questions selected ({len(selected_questions)}).")
                 else:
                     # Input is valid! Add it to our "memory".
                     new_group = {
                         "name": target_name,
-                        "questions": selected_questions
+                        "questions": selected_questions,
+                        "threshold": threshold_n,
                     }
                     st.session_state.target_groups.append(new_group)
-                    
-                    # We also manually clear the input widgets
-                    # by resetting their values in session_state.
-                    
-                    # These names come from the keys created earlier.
-                    st.session_state.new_target_name = ""  
-                    st.session_state.new_target_questions = []
-                    
                     st.success(f"Added group: {target_name}")
-
 
 
     except Exception as e:
@@ -207,10 +218,43 @@ if st.session_state.target_groups:
     st.subheader("Your Defined Learning Targets")
     
     for i, group in enumerate(st.session_state.target_groups):
-        # st.expander is a great way to show a summary
-        # while hiding the details until clicked.
-        with st.expander(f"**{group['name']}** ({len(group['questions'])} questions)"):
+        # Updated expander to show the threshold
+        with st.expander(f"**{group['name']}** ({len(group['questions'])} questions, threshold: {group['threshold']})"):
             st.write("Questions in this group:")
-            # We can use a bulleted list for clarity
             for q in group['questions']:
                 st.markdown(f"- {q}")
+    
+    st.markdown("---") # Adds a horizontal line
+    
+    # --- FINAL "RUN" BUTTON ---
+    # We use type="primary" to make it blue and stand out.
+    col1, col2 = st.columns([2, 1]) # Make 'Run' button wider
+    
+    with col1:
+        if st.button("Run Mastery Analysis", type="primary", use_container_width=True):
+            if st.session_state.processed_df is None:
+                st.error("Please upload a file first.")
+            else:
+                # Call our main analysis function!
+                analysis_results = run_mastery_analysis(
+                    st.session_state.processed_df,
+                    st.session_state.target_groups
+                )
+                
+                st.subheader("Analysis Results")
+                st.write("Students who met the 'at least N' threshold for each target:")
+                
+                # --- COMMON PATTERN: "DISPLAYING RESULTS" ---
+                # We loop through our 'results' list and display
+                # each one clearly.
+                for res in analysis_results:
+                    st.metric(
+                        label=res["name"],
+                        value=f"{res['count']} / {res['total']} students",
+                        delta=f"{res['percent']} met threshold"
+                    )
+
+    with col2:
+        if st.button("Clear All Targets", use_container_width=True):
+            st.session_state.target_groups = []
+            st.rerun() # Force an immediate re-run
