@@ -1,7 +1,41 @@
 import streamlit as st
 import pandas as pd
+
 st.set_page_config(layout='wide')
-def find_question_columns(df):
+
+# --- SIDEBAR ---
+st.sidebar.title("How to Use The App")
+st.sidebar.info(
+    """
+    **Welcome, colleagues!**
+
+    This app is designed to analyze CSV exports from your assessments.
+    For it to work, your CSV must follow two rules:
+
+    **1. Score Columns:** The column for a question's score
+       *must* end with ` [Score]`.
+       *(Note the space before the bracket!)*
+
+    **2. Correct Answers:** A correct answer in that score
+       column *must* start with `1.00`.
+       *(e.g., "1.00 / 1")*
+
+    Upload your file, define your learning targets, and
+    click "Run Analysis" to see the results!
+    """
+)
+st.sidebar.title("File Format Settings")
+score_suffix = st.sidebar.text_input(
+    label="Enter Score Suffix Label",
+    value=" [Score]",
+)
+
+correct_notation = st.sidebar.text_input(
+    label="Score Notation",
+    value="1.00",
+)
+
+def find_question_columns(df, suffix):
     """
     Scans a Pandas DataFrame for columns that end with "[Score]".
     It then returns a list of the *base* question names.
@@ -19,21 +53,21 @@ def find_question_columns(df):
     all_columns = df.columns
     question_names = []
     for col in all_columns:
-        if col.endswith(" [Score]"):
-            base_name = col[:-8]
+        if col.endswith(suffix):
+            base_name = col[:-len(suffix)]
             question_names.append(base_name)
     return question_names
 
 
-def pre_process_scores(raw_df, question_list):
+def pre_process_scores(raw_df, question_list, prefix, suffix):
     processed_df = raw_df.copy()
 
     for question in question_list:
-        score_col_name = f'{question} [Score]'
+        score_col_name = f'{question}{suffix}'
 
         # this applies a lambda operation to each cell in the target column.
         processed_df[score_col_name] = processed_df[score_col_name].apply(
-            lambda x: 1 if str(x).startswith('1.00') else 0
+            lambda x: 1 if str(x).startswith(prefix) else 0
         )
 
     return processed_df 
@@ -99,11 +133,12 @@ def run_mastery_analysis(processed_df, target_groups):
 # These commands build the visual parts of your web app.
 
 # st.title() puts a large title at the top of the page.
-st.title("History Assessment Analyzer")
+st.title("Assessment Analyzer")
 
 # st.write() is a "magic" command. It can display text,
 # data, charts, and more. Here, we're just adding a subtitle.
-st.write("Upload your CSV export to get started.")
+st.write("""Upload your CSV export to get started\n\nIf your CSV format
+        doesn't match the image, adjust the delimiters below (or chat with Quincy)""")
 
 # --- INTERACTIVE WIDGET ---
 # Here we create our first "widget". A widget is an interactive
@@ -131,6 +166,8 @@ uploaded_file = st.file_uploader(
 if 'target_groups' not in st.session_state:
     st.session_state.target_groups = []
 
+
+
 # MAIN
 if uploaded_file is not None:
 
@@ -138,21 +175,47 @@ if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
 
         # 1. Find the questions
-        question_list = find_question_columns(df)
+        question_list = find_question_columns(df, score_suffix)
 
         if not question_list:
-            st.warning("File read, however, there were no columns clearly labeled: ' [Score]'.")
+            st.warning(f"File read, however, there were no columns clearly labeled: {score_suffix}.")
             st.session_state.clear()
         else:
             # --- INTERACTIVE UI FOR CREATING GROUPS ---
             
             # 2. convert '1.00' column to 1s and 0s
-            processed_df = pre_process_scores(df, question_list)
+            processed_df = pre_process_scores(df, question_list, correct_notation, score_suffix)
             
             st.session_state.processed_df = processed_df
             st.session_state.question_list = question_list
 
             st.success(f"Successfully read and processed CSV file: {uploaded_file.name[:35]}")
+
+            # We calculate the *overall* correctness to help
+            # the user spot a bad 'Correct Answer Prefix'.
+
+            all_score_cols = [f"{q} [Score]" for q in question_list]
+
+            scores_only_df = processed_df[all_score_cols]
+
+            # 3. Get total number of 1s (sum of all cells)
+            # .sum() first sums vertically (per question)
+            # .sum() a second time sums *those* totals.
+            total_ones = scores_only_df.sum().sum()
+
+            # 4. Get total number of cells (.size is rows * cols)
+            total_cells = scores_only_df.size
+
+            # 5. Calculate percentage
+            percent_correct = (total_ones / total_cells) * 100 if total_cells > 0 else 0
+
+            # 6. Display the feedback
+            if percent_correct <= 20:
+                st.warning(f"""Sanity Check: Using a Score Notation of '{correct_notation}', 
+                        I found that {percent_correct:.1f}% of all answers were marked correct. 
+                        \nIf this seems wrong, check your 'Score Notation' in the sidebar.""")
+
+            # --- END NEW BLOCK ---
 
             st.subheader("Create a Learning Target Group")
 
@@ -165,22 +228,19 @@ if uploaded_file is not None:
                     key="new_target_name"
                 )
                 
-                # st.multiselect is the perfect widget for this.
-                # It takes our 'question_list' as the options
-                # and lets the user pick as many as they want.
-                selected_questions = st.multiselect(
-                    label="Questions Correlated to Target",
-                    options=st.session_state.question_list,
-                    key="new_target_questions"
-                )
+                st.write("Choose Questions")
+                with st.container(height=300, border=True):
+                    checkbox_states = {}
+                    for question in st.session_state.question_list:
+                        checkbox_states[question] = st.checkbox(label=question, key=f'check_{question}')
                 
+                st.write("Select Correctness Threshold")
                 threshold_n = st.number_input(
-                    label="# of Correct Answers",
+                    label="Num. Correct Answers",
                     min_value=1,
                     value=1,
                     step=1,
                     key='new_target_threshold',
-
                 )
 
                 # An 'Add' button.
@@ -189,10 +249,17 @@ if uploaded_file is not None:
                             # --- This logic now runs *only* if the submit_button was clicked ---
             if submit_button:
                 # --- COMMON PATTERN: "FORM VALIDATION" ---
+
+                selected_questions = []
+                for q in st.session_state.question_list:
+                    # We check session_state directly for the key
+                    if st.session_state[f"check_{q}"]:
+                        selected_questions.append(q)
+
                 if not target_name:
-                    st.warning("Please enter a name for the target.")
+                    st.warning("Enter a good name/label for the target.")
                 elif not selected_questions:
-                    st.warning("Please select at least one question.")
+                    st.warning("Select at least one question.")
                 # We add this validation back in!
                 elif threshold_n > len(selected_questions):
                     st.error(f"Threshold ({threshold_n}) cannot be larger than the number of questions selected ({len(selected_questions)}).")
