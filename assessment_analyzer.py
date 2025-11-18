@@ -20,6 +20,18 @@ st.sidebar.info(
        column *must* start with `1.00`.
        *(e.g., "1.00 / 1")*
 
+    **Following these steps will provide you with a file meeting the above criteria.**
+    1. Go to your assessment's Google Form results.
+    2. Locate the 3-dot Menu next to "View in Sheets".
+    3. Select "Download Responses (.csv)"
+    4. Un-zip that file. This is the CSV you'll upload to this site.
+
+    **Lastly**, this app is designed to be useful for right or wrong
+    MC-questions which all have the same point value, e.g. 1.00 / 1, 2.00 / 2, etc.
+
+    At present, problems that can have partial credit 
+    or result in essay responses are not ideal candidates for analysis.
+
     Upload your file, define your learning targets, and
     click "Run Analysis" to see the results!
     """
@@ -98,7 +110,8 @@ def run_mastery_analysis(processed_df, target_groups):
     for group in target_groups:
         group_name = group["name"]
         group_questions = group["questions"]
-        threshold = group["threshold"]
+        min_c = group["min_correct"]
+        max_c = group["max_correct"]
         
         # Find the [Score] column names for this group
         score_cols_to_sum = [f"{q} [Score]" for q in group_questions]
@@ -114,20 +127,25 @@ def run_mastery_analysis(processed_df, target_groups):
         # 1. student_scores >= threshold evalutes to T/F based on 
         # our Series and the current threshold.
         # 2. It uses .sum() to convert booleans to 1/0 and sum.
-        students_who_met_threshold = (student_scores >= threshold).sum()
+        students_in_range = ((student_scores >= min_c) & (student_scores <= max_c)).sum()
         
         # Calculate percentage
-        percent_met = (students_who_met_threshold / total_students) * 100
+        percent_met = (students_in_range / total_students) * 100
         
         results.append({
             "name": group_name,
-            "count": students_who_met_threshold,
+            "count": students_in_range,
             "total": total_students,
             "percent": f"{percent_met:.1f}%" # Format to 1 decimal
         })
         
     return results
 
+# Target deletion helper
+def delete_target(index):
+    """Removes a target group from session state by index."""
+    st.session_state.target_groups.pop(index)
+    st.rerun()
 
 # --- APP LAYOUT ---
 # These commands build the visual parts of your web app.
@@ -137,8 +155,10 @@ st.title("Assessment Analyzer")
 
 # st.write() is a "magic" command. It can display text,
 # data, charts, and more. Here, we're just adding a subtitle.
-st.write("""Upload your CSV export to get started\n\nIf your CSV format
-        doesn't match the image, adjust the delimiters below (or chat with Quincy)""")
+st.write("""Upload your CSV export to get started.\n\nIf your CSV format
+        doesn't match the image, adjust the delimiters below (or chat with Quincy).""")
+
+st.write("""**Please read the sidebar for some additional information on best use!**""")
 
 # --- INTERACTIVE WIDGET ---
 # Here we create our first "widget". A widget is an interactive
@@ -225,7 +245,8 @@ if uploaded_file is not None:
                 # access its value.
                 target_name = st.text_input(
                     label="Learning Target Name",
-                    key="new_target_name"
+                    key="new_target_name",
+                    value="Ex: Revolutions - MET TARGET or Revolutions - ALMOST MET TARGET",
                 )
                 
                 st.write("Choose Questions")
@@ -234,15 +255,30 @@ if uploaded_file is not None:
                     for question in st.session_state.question_list:
                         checkbox_states[question] = st.checkbox(label=question, key=f'check_{question}')
                 
-                st.write("Select Correctness Threshold")
-                threshold_n = st.number_input(
-                    label="Num. Correct Answers",
-                    min_value=1,
-                    value=1,
-                    step=1,
-                    key='new_target_threshold',
-                )
+                # TODO: Cleanup if Range is working correctly
+                # st.write("Select Correctness Threshold (minimum # questions correct to meet criteria)")
+                # threshold_n = st.number_input(
+                #     label="Num. Correct Answers",
+                #     min_value=1,
+                #     value=1,
+                #     step=1,
+                #     key='new_target_threshold',
+                # )
 
+                st.write("Select Range of Correct Answers")
+                st.caption("Students are counted ONLY if their score falls strictly within this range.")
+
+
+                len_questions = len(st.session_state.question_list)
+
+                correctness_range = st.slider(
+                    label="Min / Max Correct Answers",
+                    min_value=0,
+                    max_value=len_questions,
+                    value=(0, len_questions),
+                    step=1,
+                    key='new_target_range',
+                )
                 # An 'Add' button.
                 submit_button = st.form_submit_button("Add Learning Target")
 
@@ -256,19 +292,23 @@ if uploaded_file is not None:
                     if st.session_state[f"check_{q}"]:
                         selected_questions.append(q)
 
+                # Unpack the slider
+                min_selected, max_selected = correctness_range
+
                 if not target_name:
                     st.warning("Enter a good name/label for the target.")
                 elif not selected_questions:
                     st.warning("Select at least one question.")
                 # We add this validation back in!
-                elif threshold_n > len(selected_questions):
-                    st.error(f"Threshold ({threshold_n}) cannot be larger than the number of questions selected ({len(selected_questions)}).")
+                elif max_selected > len(selected_questions):
+                    st.error(f"Threshold ({max_selected}) cannot be larger than the number of questions selected ({len(selected_questions)}).")
                 else:
                     # Input is valid! Add it to our "memory".
                     new_group = {
                         "name": target_name,
                         "questions": selected_questions,
-                        "threshold": threshold_n,
+                        "min_correct": min_selected,
+                        "max_correct": max_selected,
                     }
                     st.session_state.target_groups.append(new_group)
                     st.success(f"Added group: {target_name}")
@@ -285,12 +325,26 @@ if st.session_state.target_groups:
     st.subheader("Your Defined Learning Targets")
     
     for i, group in enumerate(st.session_state.target_groups):
+
+        col_exp, col_btn = st.columns([10, 1])
         # Updated expander to show the threshold
-        with st.expander(f"**{group['name']}** ({len(group['questions'])} questions, threshold: {group['threshold']})"):
-            st.write("Questions in this group:")
-            for q in group['questions']:
-                st.markdown(f"- {q}")
+        with col_exp:
+            with st.expander(f"**{group['name']}** ({len(group['questions'])} questions, \
+                            Correctness Range: {group['min_correct']} - {group['max_correct']})"):
+                st.write("Questions in this group:")
+                for q in group['questions']:
+                    st.markdown(f"- {q}")
     
+        with col_btn:
+            # unique button tracking
+            st.button(
+                "❌",
+                key=f'del_{i}',
+                on_click=delete_target,
+                args=(i,),
+                help='Deletes this learning target.',
+
+            )
     st.markdown("---") # Adds a horizontal line
     
     # --- FINAL "RUN" BUTTON ---
