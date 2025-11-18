@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-
+st.set_page_config(layout='wide')
 def find_question_columns(df):
     """
     Scans a Pandas DataFrame for columns that end with "[Score]".
@@ -161,7 +161,7 @@ if uploaded_file is not None:
                 # The "key" is a unique ID we can use to
                 # access its value.
                 target_name = st.text_input(
-                    label="Learning Target:",
+                    label="Learning Target Name",
                     key="new_target_name"
                 )
                 
@@ -169,13 +169,13 @@ if uploaded_file is not None:
                 # It takes our 'question_list' as the options
                 # and lets the user pick as many as they want.
                 selected_questions = st.multiselect(
-                    label="Select questions for this learning target:",
+                    label="Questions Correlated to Target",
                     options=st.session_state.question_list,
                     key="new_target_questions"
                 )
                 
                 threshold_n = st.number_input(
-                    label="Num. Questions Correct Threshold",
+                    label="# of Correct Answers",
                     min_value=1,
                     value=1,
                     step=1,
