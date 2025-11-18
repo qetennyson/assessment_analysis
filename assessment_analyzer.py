@@ -41,7 +41,6 @@ score_suffix = st.sidebar.text_input(
     label="Enter Score Suffix Label",
     value=" [Score]",
 )
-
 correct_notation = st.sidebar.text_input(
     label="Score Notation",
     value="1.00",
@@ -141,32 +140,50 @@ def run_mastery_analysis(processed_df, target_groups):
         
     return results
 
+def calculate_item_analysis(processed_df, group, score_suffix):
+    """
+    Calculates the percentage of students who answered each question
+    in the target group correctly.
+    
+    Returns: DataFrame suitable for st.bar_chart.
+    """
+    questions = group["questions"]
+    
+    # 1. Identify the score columns
+    score_cols = [f"{q}{score_suffix}" for q in questions]
+    
+    # 2. Extract the relevant 1s/0s data
+    item_df = processed_df[score_cols]
+    
+    total_students = len(item_df)
+    
+    # 3. Calculate the sum of 1s (correct answers) for each column (question)
+    # Then divide by total students to get the percentage correct
+    correct_percentages = (item_df.sum(axis=0) / total_students) * 100
+    
+    # 4. Prepare DataFrame for Streamlit bar chart
+    item_results = pd.DataFrame({
+        'Question': [f"Q{q.split('.')[0].zfill(2)}" for q in questions],
+        'Success Rate (%)': correct_percentages.values
+    }).set_index('Question')
+    
+    return item_results
+
 # Target deletion helper
 def delete_target(index):
     """Removes a target group from session state by index."""
     st.session_state.target_groups.pop(index)
     st.rerun()
 
-# --- APP LAYOUT ---
-# These commands build the visual parts of your web app.
-
-# st.title() puts a large title at the top of the page.
+# --- HEADER ---
 st.title("Assessment Analyzer")
 
-# st.write() is a "magic" command. It can display text,
-# data, charts, and more. Here, we're just adding a subtitle.
 st.write("""Upload your CSV export to get started.\n\nIf your CSV format
         doesn't match the image, adjust the delimiters below (or chat with Quincy).""")
 
 st.write("""**Please read the sidebar for some additional information on best use!**""")
 
-# --- INTERACTIVE WIDGET ---
-# Here we create our first "widget". A widget is an interactive
-# element like a button, a slider, or, in this case, a file uploader.
-
-# We tell Streamlit to create a file uploader with a label.
-# When a user uploads a file, Streamlit stores it in the
-# 'uploaded_file' variable.
+# --- APP SETUP ---
 
 uploaded_file = st.file_uploader(
     label="Choose a CSV file from your computer",
@@ -185,7 +202,8 @@ uploaded_file = st.file_uploader(
 # This ensures our list exists and persists across re-runs.
 if 'target_groups' not in st.session_state:
     st.session_state.target_groups = []
-
+if 'processed_df' not in st.session_state:
+    st.session_state.processed_df = None
 
 
 # MAIN
@@ -213,9 +231,7 @@ if uploaded_file is not None:
 
             # We calculate the *overall* correctness to help
             # the user spot a bad 'Correct Answer Prefix'.
-
             all_score_cols = [f"{q} [Score]" for q in question_list]
-
             scores_only_df = processed_df[all_score_cols]
 
             # 3. Get total number of 1s (sum of all cells)
@@ -231,18 +247,15 @@ if uploaded_file is not None:
 
             # 6. Display the feedback
             if percent_correct <= 20:
-                st.warning(f"""Sanity Check: Using a Score Notation of '{correct_notation}', 
-                        I found that {percent_correct:.1f}% of all answers were marked correct. 
-                        \nIf this seems wrong, check your 'Score Notation' in the sidebar.""")
-
-            # --- END NEW BLOCK ---
+                st.warning(f"Sanity Check: Using a Score Notation of '{correct_notation}', \
+                        I found that {percent_correct:.1f}% of all answers were marked correct. \
+                        \nIf this seems wrong, check your 'Score Notation' in the sidebar.")
 
             st.subheader("Create a Learning Target Group")
 
-            with st.form(key='target_form'):
+            with st.form(key='target_form', clear_on_submit=True):
                 # st.text_input creates a text box.
-                # The "key" is a unique ID we can use to
-                # access its value.
+                # The "key" is a unique ID we can use to access its value.
                 target_name = st.text_input(
                     label="Learning Target Name",
                     key="new_target_name",
@@ -254,16 +267,6 @@ if uploaded_file is not None:
                     checkbox_states = {}
                     for question in st.session_state.question_list:
                         checkbox_states[question] = st.checkbox(label=question, key=f'check_{question}')
-                
-                # TODO: Cleanup if Range is working correctly
-                # st.write("Select Correctness Threshold (minimum # questions correct to meet criteria)")
-                # threshold_n = st.number_input(
-                #     label="Num. Correct Answers",
-                #     min_value=1,
-                #     value=1,
-                #     step=1,
-                #     key='new_target_threshold',
-                # )
 
                 st.write("Select Range of Correct Answers")
                 st.caption("Students are counted ONLY if their score falls strictly within this range.")
@@ -365,15 +368,28 @@ if st.session_state.target_groups:
                 st.subheader("Analysis Results")
                 st.write("Students who met the 'at least N' threshold for each target:")
                 
-                # --- COMMON PATTERN: "DISPLAYING RESULTS" ---
-                # We loop through our 'results' list and display
-                # each one clearly.
                 for res in analysis_results:
                     st.metric(
                         label=res["name"],
                         value=f"{res['count']} / {res['total']} students",
                         delta=f"{res['percent']} met threshold"
                     )
+
+                    # TODO: Need to correct this logic, just buggy with the bar charts.
+                    # current_group = st.session_state.target_groups[i]
+
+                    # item_analysis_df = calculate_item_analysis(
+                    #     st.session_state.processed_df,
+                    #     current_group,
+                    #     score_suffix
+                    # )
+
+                    # with st.container(border=True):
+                    #     st.caption("Item Analysis: Success Rate per Question - x-axis: question #, y-axis: percent correct")
+                    #     st.write(r"% of all students answering this item correctly")
+                    #     st.bar_chart(item_analysis_df, height=250)
+
+                    # st.markdown('---')
 
     with col2:
         if st.button("Clear All Targets", use_container_width=True):
