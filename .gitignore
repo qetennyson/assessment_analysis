@@ -208,3 +208,5 @@ secrets.json
 .env.development.local
 .env.test.local
 .env.production.local
+preferences.md
+sample_files/example_sheet.csv

@@ -1,5 +1,12 @@
+"""Assessment Analyzer: Mastery Analysis Tool for Google Form Assessments.
+
+A Streamlit application that helps educators analyze assessment data exported
+from Google Forms, focusing on student mastery of custom-defined learning targets.
+"""
+
 import streamlit as st
 import pandas as pd
+from typing import Optional
 
 st.set_page_config(layout='wide')
 
@@ -46,20 +53,18 @@ correct_notation = st.sidebar.text_input(
     value="1.00",
 )
 
-def find_question_columns(df, suffix):
-    """
-    Scans a Pandas DataFrame for columns that end with "[Score]".
-    It then returns a list of the *base* question names.
+def find_question_columns(df: pd.DataFrame, suffix: str) -> list[str]:
+    """Identify score columns in a DataFrame.
 
-    For example:
-    If it finds "Question 1 [Score]", it will return "Question 1".
+    Scans the DataFrame for columns ending with the specified suffix
+    and returns the base question names (without the suffix).
 
     Args:
-        df (pd.DataFrame): The DataFrame loaded from the user's CSV.
+        df: The DataFrame loaded from the user's CSV.
+        suffix: The column suffix to search for (e.g., " [Score]").
 
     Returns:
-        list: A list of strings, where each string is a base
-              question name that has a corresponding score column.
+        Base question names that have corresponding score columns.
     """
     all_columns = df.columns
     question_names = []
@@ -70,13 +75,32 @@ def find_question_columns(df, suffix):
     return question_names
 
 
-def pre_process_scores(raw_df, question_list, prefix, suffix):
+def pre_process_scores(
+    raw_df: pd.DataFrame,
+    question_list: list[str],
+    prefix: str,
+    suffix: str,
+) -> pd.DataFrame:
+    """Convert score columns to binary (1/0) based on correctness.
+
+    For each question's score column, convert responses to binary:
+    1 if the response starts with the correct prefix, 0 otherwise.
+    See README for details on why binary conversion is used.
+
+    Args:
+        raw_df: The DataFrame loaded from the user's CSV.
+        question_list: List of base question names to process.
+        prefix: The prefix indicating a correct answer (e.g., "1.00").
+        suffix: The score column suffix (e.g., " [Score]").
+
+    Returns:
+        A copy of raw_df with score columns converted to binary values.
+    """
     processed_df = raw_df.copy()
 
     for question in question_list:
         score_col_name = f'{question}{suffix}'
 
-        # this applies a lambda operation to each cell in the target column.
         processed_df[score_col_name] = processed_df[score_col_name].apply(
             lambda x: 1 if str(x).startswith(prefix) else 0
         )
@@ -84,94 +108,66 @@ def pre_process_scores(raw_df, question_list, prefix, suffix):
     return processed_df 
 
 
-def run_mastery_analysis(processed_df, target_groups):
-    """
-    The core analysis function.
-    
-    Calculates, for each group, how many students
-    met the required 'N' (threshold) of correct answers.
-    
+def run_mastery_analysis(
+    processed_df: pd.DataFrame,
+    target_groups: list[dict],
+    suffix: str,
+) -> list[dict]:
+    """Calculate mastery percentage for each learning target.
+
+    For each target group, counts how many students met the correctness
+    threshold and returns results with percentages. Uses vectorized pandas
+    operations for efficiency. See README for algorithmic details.
+
     Args:
-        processed_df (pd.DataFrame): The cleaned DF with 1s/0s.
-        target_groups (list): Our list of group dictionaries
-                              from st.session_state.
-                              
+        processed_df: DataFrame with score columns converted to binary (1/0).
+        target_groups: List of group dictionaries with keys: name, questions,
+                      min_correct, max_correct.
+        suffix: The score column suffix (e.g., " [Score]").
+
     Returns:
-        list: A list of result dictionaries, one for each group.
+        List of result dictionaries, one per target group, containing:
+        name, count (students meeting threshold), total (all students),
+        and percent (formatted percentage string).
     """
-    
     total_students = len(processed_df)
     results = []
-    
+
     if total_students == 0:
         return []
-    
+
     for group in target_groups:
         group_name = group["name"]
         group_questions = group["questions"]
         min_c = group["min_correct"]
         max_c = group["max_correct"]
-        
-        # Find the [Score] column names for this group
-        score_cols_to_sum = [f"{q} [Score]" for q in group_questions]
-        
-        # A vectorized operation .sum() axis 1 identifies the columns
-        # to sum in the dataframe, and then immediately calls NumPy 
-        # code to do a highly efficient sum vs. nested loops.
-        # It produces a Series object (a column) of student's summed scores
-        # for the range.
+
+        # Construct score column names for this group
+        score_cols_to_sum = [f"{q}{suffix}" for q in group_questions]
+
+        # Use vectorized operations: sum binary scores across selected questions
+        # for each student (axis=1), then count students in the threshold range.
         student_scores = processed_df[score_cols_to_sum].sum(axis=1)
-        
-        # Two vector operations are used here in a chain.
-        # 1. student_scores >= threshold evalutes to T/F based on 
-        # our Series and the current threshold.
-        # 2. It uses .sum() to convert booleans to 1/0 and sum.
         students_in_range = ((student_scores >= min_c) & (student_scores <= max_c)).sum()
-        
+
         # Calculate percentage
         percent_met = (students_in_range / total_students) * 100
-        
+
         results.append({
             "name": group_name,
             "count": students_in_range,
             "total": total_students,
-            "percent": f"{percent_met:.1f}%" # Format to 1 decimal
+            "percent": f"{percent_met:.1f}%",
         })
-        
+
     return results
 
-def calculate_item_analysis(processed_df, group, score_suffix):
-    """
-    Calculates the percentage of students who answered each question
-    in the target group correctly.
-    
-    Returns: DataFrame suitable for st.bar_chart.
-    """
-    questions = group["questions"]
-    
-    # 1. Identify the score columns
-    score_cols = [f"{q}{score_suffix}" for q in questions]
-    
-    # 2. Extract the relevant 1s/0s data
-    item_df = processed_df[score_cols]
-    
-    total_students = len(item_df)
-    
-    # 3. Calculate the sum of 1s (correct answers) for each column (question)
-    # Then divide by total students to get the percentage correct
-    correct_percentages = (item_df.sum(axis=0) / total_students) * 100
-    
-    # 4. Prepare DataFrame for Streamlit bar chart
-    item_results = pd.DataFrame({
-        'Question': [f"Q{q.split('.')[0].zfill(2)}" for q in questions],
-        'Success Rate (%)': correct_percentages.values
-    }).set_index('Question')
-    
-    return item_results
+def delete_target(index: int) -> None:
+    """Remove a target group from session state.
 
-# Target deletion helper
-def delete_target(index):
-    """Removes a target group from session state by index."""
+    Args:
+        index: The index of the target group to delete.
+    """
     st.session_state.target_groups.pop(index)
     st.rerun()
 
@@ -190,20 +186,14 @@ uploaded_file = st.file_uploader(
     type="csv"  # We can restrict the file type to only allow CSVs
 )
 
-# --- COMMON PATTERN: "INITIALIZING SESSION STATE" ---
-#
-# We need to create our "memory" (st.session_state)
-# before the user interacts with it.
-#
-# This 'if' statement checks if we've already created
-# 'target_groups' in our session state. If not,
-# we create it as an empty list.
-#
-# This ensures our list exists and persists across re-runs.
+# Initialize session state for persistent data across reruns.
+# See README and preferences.md for session state patterns.
 if 'target_groups' not in st.session_state:
     st.session_state.target_groups = []
 if 'processed_df' not in st.session_state:
     st.session_state.processed_df = None
+if 'question_list' not in st.session_state:
+    st.session_state.question_list = []
 
 
 # MAIN
@@ -216,12 +206,12 @@ if uploaded_file is not None:
         question_list = find_question_columns(df, score_suffix)
 
         if not question_list:
-            st.warning(f"File read, however, there were no columns clearly labeled: {score_suffix}.")
+            st.warning(
+                f"File read, however, there were no columns clearly labeled: {score_suffix}."
+            )
             st.session_state.clear()
         else:
-            # --- INTERACTIVE UI FOR CREATING GROUPS ---
-            
-            # 2. convert '1.00' column to 1s and 0s
+            # Convert score columns to binary (1/0) representation.
             processed_df = pre_process_scores(df, question_list, correct_notation, score_suffix)
             
             st.session_state.processed_df = processed_df
@@ -229,27 +219,20 @@ if uploaded_file is not None:
 
             st.success(f"Successfully read and processed CSV file: {uploaded_file.name[:35]}")
 
-            # We calculate the *overall* correctness to help
-            # the user spot a bad 'Correct Answer Prefix'.
-            all_score_cols = [f"{q} [Score]" for q in question_list]
+            # Sanity check: display overall correctness percentage to help users
+            # detect if the 'Correct Answer Prefix' setting is wrong.
+            all_score_cols = [f"{q}{score_suffix}" for q in question_list]
             scores_only_df = processed_df[all_score_cols]
-
-            # 3. Get total number of 1s (sum of all cells)
-            # .sum() first sums vertically (per question)
-            # .sum() a second time sums *those* totals.
             total_ones = scores_only_df.sum().sum()
-
-            # 4. Get total number of cells (.size is rows * cols)
             total_cells = scores_only_df.size
-
-            # 5. Calculate percentage
             percent_correct = (total_ones / total_cells) * 100 if total_cells > 0 else 0
 
-            # 6. Display the feedback
             if percent_correct <= 20:
-                st.warning(f"Sanity Check: Using a Score Notation of '{correct_notation}', \
-                        I found that {percent_correct:.1f}% of all answers were marked correct. \
-                        \nIf this seems wrong, check your 'Score Notation' in the sidebar.")
+                st.warning(
+                    f"Sanity Check: Using a Score Notation of '{correct_notation}', "
+                    f"I found that {percent_correct:.1f}% of all answers were marked correct. "
+                    f"\nIf this seems wrong, check your 'Score Notation' in the sidebar."
+                )
 
             st.subheader("Create a Learning Target Group")
 
@@ -264,13 +247,11 @@ if uploaded_file is not None:
                 
                 st.write("Choose Questions")
                 with st.container(height=300, border=True):
-                    checkbox_states = {}
                     for question in st.session_state.question_list:
-                        checkbox_states[question] = st.checkbox(label=question, key=f'check_{question}')
+                        st.checkbox(label=question, key=f'check_{question}')
 
                 st.write("Select Range of Correct Answers")
                 st.caption("Students are counted ONLY if their score falls strictly within this range.")
-
 
                 len_questions = len(st.session_state.question_list)
 
@@ -285,13 +266,10 @@ if uploaded_file is not None:
                 # An 'Add' button.
                 submit_button = st.form_submit_button("Add Learning Target")
 
-                            # --- This logic now runs *only* if the submit_button was clicked ---
+            # Form validation runs only when submit button is clicked.
             if submit_button:
-                # --- COMMON PATTERN: "FORM VALIDATION" ---
-
                 selected_questions = []
                 for q in st.session_state.question_list:
-                    # We check session_state directly for the key
                     if st.session_state[f"check_{q}"]:
                         selected_questions.append(q)
 
@@ -302,11 +280,13 @@ if uploaded_file is not None:
                     st.warning("Enter a good name/label for the target.")
                 elif not selected_questions:
                     st.warning("Select at least one question.")
-                # We add this validation back in!
                 elif max_selected > len(selected_questions):
-                    st.error(f"Threshold ({max_selected}) cannot be larger than the number of questions selected ({len(selected_questions)}).")
+                    st.error(
+                        f"Threshold ({max_selected}) cannot be larger than the number of "
+                        f"questions selected ({len(selected_questions)})."
+                    )
                 else:
-                    # Input is valid! Add it to our "memory".
+                    # Input is valid. Store in session state.
                     new_group = {
                         "name": target_name,
                         "questions": selected_questions,
@@ -318,80 +298,57 @@ if uploaded_file is not None:
 
 
     except Exception as e:
-        # If anything in our 'try' block fails, this code
-        # will run. 'e' is the error message.
-        # st.error() displays a red error box.
         st.error(f"An error occurred while processing the file: {e}")
         st.write("Please ensure this is a valid CSV file and try again.")
 
 if st.session_state.target_groups:
     st.subheader("Your Defined Learning Targets")
-    
-    for i, group in enumerate(st.session_state.target_groups):
 
+    for i, group in enumerate(st.session_state.target_groups):
         col_exp, col_btn = st.columns([10, 1])
-        # Updated expander to show the threshold
         with col_exp:
-            with st.expander(f"**{group['name']}** ({len(group['questions'])} questions, \
-                            Correctness Range: {group['min_correct']} - {group['max_correct']})"):
+            with st.expander(
+                f"**{group['name']}** ({len(group['questions'])} questions, "
+                f"Range: {group['min_correct']}-{group['max_correct']}))"
+            ):
                 st.write("Questions in this group:")
                 for q in group['questions']:
                     st.markdown(f"- {q}")
-    
+
         with col_btn:
-            # unique button tracking
             st.button(
                 "❌",
                 key=f'del_{i}',
                 on_click=delete_target,
                 args=(i,),
-                help='Deletes this learning target.',
-
+                help="Delete this learning target.",
             )
-    st.markdown("---") # Adds a horizontal line
+    st.markdown("---")
     
-    # --- FINAL "RUN" BUTTON ---
-    # We use type="primary" to make it blue and stand out.
-    col1, col2 = st.columns([2, 1]) # Make 'Run' button wider
-    
+    col1, col2 = st.columns([2, 1])
+
     with col1:
         if st.button("Run Mastery Analysis", type="primary", use_container_width=True):
             if st.session_state.processed_df is None:
                 st.error("Please upload a file first.")
             else:
-                # Call our main analysis function!
                 analysis_results = run_mastery_analysis(
                     st.session_state.processed_df,
-                    st.session_state.target_groups
+                    st.session_state.target_groups,
+                    score_suffix,
                 )
-                
+
                 st.subheader("Analysis Results")
-                st.write("Students who met the 'at least N' threshold for each target:")
-                
+                st.write("Students who met the threshold for each target:")
+
                 for res in analysis_results:
                     st.metric(
                         label=res["name"],
                         value=f"{res['count']} / {res['total']} students",
-                        delta=f"{res['percent']} met threshold"
+                        delta=f"{res['percent']} met threshold",
                     )
-
-                    # TODO: Need to correct this logic, just buggy with the bar charts.
-                    # current_group = st.session_state.target_groups[i]
-
-                    # item_analysis_df = calculate_item_analysis(
-                    #     st.session_state.processed_df,
-                    #     current_group,
-                    #     score_suffix
-                    # )
-
-                    # with st.container(border=True):
-                    #     st.caption("Item Analysis: Success Rate per Question - x-axis: question #, y-axis: percent correct")
-                    #     st.write(r"% of all students answering this item correctly")
-                    #     st.bar_chart(item_analysis_df, height=250)
-
-                    # st.markdown('---')
 
     with col2:
         if st.button("Clear All Targets", use_container_width=True):
             st.session_state.target_groups = []
-            st.rerun() # Force an immediate re-run
+            st.rerun()
