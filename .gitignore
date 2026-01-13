@@ -210,3 +210,6 @@ secrets.json
 .env.production.local
 preferences.md
 sample_files/example_sheet.csv
+TODOS.md
+sample_files/BLOCKED_PII_EMAIL_NAME.csv
+.gitignore

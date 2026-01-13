@@ -4,11 +4,27 @@ A Streamlit application that helps educators analyze assessment data exported
 from Google Forms, focusing on student mastery of custom-defined learning targets.
 """
 
+import re
 import streamlit as st
 import pandas as pd
-from typing import Optional
 
 st.set_page_config(layout='wide')
+
+# --- PII PATTERNS ---
+# Allow Student Assessment ID variants; block common PII indicators.
+PII_ALLOWLIST_PATTERN = re.compile(
+    r"\b(student[_\s]*assess(ment)?[_\s]*id|student[_\s]*id|studentid|sid)\b",
+    re.IGNORECASE,
+)
+
+PII_BLOCKLIST_PATTERNS = [
+    re.compile(r"\bemail\b", re.IGNORECASE),
+    re.compile(r"\b(phone|mobile|cell)\b", re.IGNORECASE),
+    re.compile(r"\b(ssn|social\s+security)\b", re.IGNORECASE),
+    re.compile(r"\b(address|street|st\.?|ave|road|rd\.?|apartment|apt\.?|unit)\b", re.IGNORECASE),
+    re.compile(r"\b(first\s+name|last\s+name|full\s+name|student\s+name|guardian)\b", re.IGNORECASE),
+    re.compile(r"\b(dob|date\s+of\s+birth|birth\s+date)\b", re.IGNORECASE),
+]
 
 # --- SIDEBAR ---
 st.sidebar.title("How to Use The App")
@@ -73,6 +89,33 @@ def find_question_columns(df: pd.DataFrame, suffix: str) -> list[str]:
             base_name = col[:-len(suffix)]
             question_names.append(base_name)
     return question_names
+
+
+def validate_pii(columns: list[str]) -> tuple[bool, list[str]]:
+    """Detect likely PII columns while allowing student assessment IDs.
+
+    Args:
+        columns: List of column names from the uploaded CSV.
+
+    Returns:
+        A tuple of (is_valid, offending_columns). is_valid is False when any
+        column matches a PII blocklist pattern (unless it matches the allowlist).
+    """
+    offending: list[str] = []
+
+    for col in columns:
+        normalized = re.sub(r"\s+", " ", col.strip().lower().replace("_", " "))
+
+        # Skip allowed student assessment ID variants
+        if PII_ALLOWLIST_PATTERN.search(normalized):
+            continue
+
+        for pattern in PII_BLOCKLIST_PATTERNS:
+            if pattern.search(normalized):
+                offending.append(col)
+                break
+
+    return len(offending) == 0, offending
 
 
 def pre_process_scores(
@@ -202,7 +245,17 @@ if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
 
-        # 1. Find the questions
+        # Block uploads containing likely PII columns before any processing.
+        is_valid, offending_columns = validate_pii(list(df.columns))
+        if not is_valid:
+            st.error(
+                "Upload blocked: possible PII detected in columns: "
+                + ", ".join(offending_columns)
+            )
+            st.session_state.clear()
+            st.stop()
+
+        # Find the questions
         question_list = find_question_columns(df, score_suffix)
 
         if not question_list:
@@ -237,7 +290,6 @@ if uploaded_file is not None:
             st.subheader("Create a Learning Target Group")
 
             with st.form(key='target_form', clear_on_submit=True):
-                # st.text_input creates a text box.
                 # The "key" is a unique ID we can use to access its value.
                 target_name = st.text_input(
                     label="Learning Target Name",
@@ -263,7 +315,6 @@ if uploaded_file is not None:
                     step=1,
                     key='new_target_range',
                 )
-                # An 'Add' button.
                 submit_button = st.form_submit_button("Add Learning Target")
 
             # Form validation runs only when submit button is clicked.
@@ -273,7 +324,6 @@ if uploaded_file is not None:
                     if st.session_state[f"check_{q}"]:
                         selected_questions.append(q)
 
-                # Unpack the slider
                 min_selected, max_selected = correctness_range
 
                 if not target_name:
