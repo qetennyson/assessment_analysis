@@ -47,7 +47,9 @@ st.sidebar.info(
     1. Go to your assessment's Google Form results.
     2. Locate the 3-dot Menu next to "View in Sheets".
     3. Select "Download Responses (.csv)"
-    4. Un-zip that file. This is the CSV you'll upload to this site.
+    4. Un-zip that file. 
+    5. REMOVE THE EMAILS/NAMES COLUMN.  No PII!
+    6. Upload that CSV to this site.
 
     **Lastly**, this app is designed to be useful for right or wrong
     MC-questions which all have the same point value, e.g. 1.00 / 1, 2.00 / 2, etc.
@@ -200,7 +202,7 @@ def run_mastery_analysis(
             "name": group_name,
             "count": students_in_range,
             "total": total_students,
-            "percent": f"{percent_met:.1f}%",
+            "percent": percent_met,
         })
 
     return results
@@ -395,7 +397,7 @@ if st.session_state.target_groups:
                     st.metric(
                         label=res["name"],
                         value=f"{res['count']} / {res['total']} students",
-                        delta=f"{res['percent']} met threshold",
+                        delta=f"{res['percent']:.1f}% met threshold",
                     )
 
     with col2:
