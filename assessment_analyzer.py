@@ -7,6 +7,7 @@ from Google Forms, focusing on student mastery of custom-defined learning target
 import re
 import streamlit as st
 import pandas as pd
+import altair as altair
 
 st.set_page_config(layout='wide')
 
@@ -71,6 +72,8 @@ correct_notation = st.sidebar.text_input(
     value="1.00",
 )
 
+
+## CORE PAGE COMPONENTS / FUNCTIONS
 def find_question_columns(df: pd.DataFrame, suffix: str) -> list[str]:
     """Identify score columns in a DataFrame.
 
@@ -399,6 +402,11 @@ if st.session_state.target_groups:
                         value=f"{res['count']} / {res['total']} students",
                         delta=f"{res['percent']:.1f}% met threshold",
                     )
+
+                results_frame = pd.DataFrame(analysis_results)
+                data_for_barchart = results_frame[['name', 'percent']].set_index('name')
+
+                st.bar_chart(data_for_barchart, horizontal=True, x_label="Percent Met")
 
     with col2:
         if st.button("Clear All Targets", use_container_width=True):
