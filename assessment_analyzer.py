@@ -7,7 +7,6 @@ from Google Forms, focusing on student mastery of custom-defined learning target
 import re
 import streamlit as st
 import pandas as pd
-import altair as altair
 
 st.set_page_config(layout='wide')
 
